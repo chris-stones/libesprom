@@ -28,42 +28,11 @@
 #endif
 
 #if defined(RH_LITTLE_ENDIAN)
-	#define RH_IS_LITTLE_ENDIAN 1
-	#define RH_IS_BIG_ENDIAN 0
-	#define CPU_TO_BE_32(x) (bswap_32((x)))
-	#define BE_TO_CPU_32(x) (bswap_32((x)))
-	#define CPU_TO_LE_32(x) ((x))
-    #define LE_TO_CPU_32(x) ((x))
-	#define CPU_TO_BE_16(x) (bswap_16((x)))
-	#define BE_TO_CPU_16(x) (bswap_16((x)))
-	#define CPU_TO_LE_16(x) ((x))
-    #define LE_TO_CPU_16(x) ((x))
 	#define BE_TO_CPU_16_INPLACE(x) do{ (x) = bswap_16((x)); }while(0)
 	#define BE_TO_CPU_32_INPLACE(x) do{ (x) = bswap_32((x)); }while(0)
-	#define LE_TO_CPU_16_INPLACE(x) do{                      }while(0)
-	#define LE_TO_CPU_32_INPLACE(x) do{                      }while(0)
-	#define COPY_TWO_CPU16_TO_BE16(out, in)\
-	do {\
-		((uint16_t*)out)[0] = CPU_TO_BE_16(((uint16_t*)in)[0]);\
-		((uint16_t*)out)[1] = CPU_TO_BE_16(((uint16_t*)in)[1]);\
-	}while(0)
 #elif defined(RH_BIG_ENDIAN)
-	#define RH_IS_LITTLE_ENDIAN 0
-	#define RH_IS_BIG_ENDIAN 1
-	#define CPU_TO_BE_32(x) ((x))
-    #define BE_TO_CPU_32(x) ((x))
-	#define CPU_TO_LE_32(x) (bswap_32((x)))
-	#define LE_TO_CPU_32(x) (bswap_32((x)))
-	#define CPU_TO_BE_16(x) ((x))
-    #define BE_TO_CPU_16(x) ((x))
-	#define CPU_TO_LE_16(x) (bswap_16((x)))
-	#define LE_TO_CPU_16(x) (bswap_16((x)))
-	#define LE_TO_CPU_16_INPLACE(x) do{ (x) = bswap_16((x)); }while(0)
-	#define LE_TO_CPU_32_INPLACE(x) do{ (x) = bswap_32((x)); }while(0)
 	#define BE_TO_CPU_16_INPLACE(x) do{                      }while(0)
 	#define BE_TO_CPU_32_INPLACE(x) do{                      }while(0)
-	#define COPY_TWO_CPU16_TO_BE16(out, in)\
-		(*((uint32_t*)(out))) = (*((uint32_t*)(in)))
 #else
 	#error cannot determine endianness!
 #endif
