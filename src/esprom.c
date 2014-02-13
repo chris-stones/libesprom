@@ -16,8 +16,11 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <linux/limits.h>
+#include <sys/ioctl.h>
 
-#define ALLOC_CHUNK_SIZE 4096 * 2
+#include "memchunk.h"
+
+#define LIBESPROM_STREAM 0
 
 #if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
 #define RH_BIG_ENDIAN
@@ -37,145 +40,7 @@
 	#error cannot determine endianness!
 #endif
 
-struct mem_chunk;
 
-struct mem_chunk_header {
-	struct mem_chunk * next;
-};
-
-#define ALLOC_DATA_SIZE (ALLOC_CHUNK_SIZE - sizeof(struct mem_chunk_header))
-
-struct mem_chunk {
-	struct mem_chunk_header header;
-	uint8_t data[ALLOC_DATA_SIZE];
-};
-
-struct mem_chunk_ctx {
-
-	struct mem_chunk * base;
-	struct mem_chunk * thiz;
-	size_t cur_pos;
-	size_t thiz_offset;
-	size_t size;
-};
-typedef struct mem_chunk_ctx mem_chunk_ctx_t;
-
-void free_chunks(struct mem_chunk * head) {
-
-	while(head) {
-		struct mem_chunk * p = head;
-		head = head->header.next;
-		free(p);
-	}
-}
-
-static struct mem_chunk * alloc_chunk(struct mem_chunk * parent) {
-
-	struct mem_chunk * chunk = malloc(sizeof(struct mem_chunk));
-
-	if( chunk ) {
-		chunk->header.next = NULL;
-		if( parent )
-			parent->header.next = chunk;
-	}
-
-	return chunk;
-}
-
-static struct mem_chunk * _alloc_num_chunks(size_t chunks) {
-
-	struct mem_chunk * head = NULL;
-	struct mem_chunk * thiz = NULL;
-
-	while(chunks--) {
-		if((thiz = alloc_chunk(thiz))==NULL)
-			goto cleanup;
-		if(!head)
-			head = thiz;
-	}
-
-	return head;
-
-cleanup:
-
-	free_chunks(head);
-	return NULL;
-}
-
-static struct mem_chunk * alloc_chunks(size_t bytes) {
-
-	return _alloc_num_chunks( (bytes + (ALLOC_DATA_SIZE-1)) / ALLOC_DATA_SIZE );
-}
-
-static int mem_chunk_getbuffer(mem_chunk_ctx_t * ctx, void ** buffer, size_t * bufferlen ) {
-
-	if(!ctx || ! buffer || !bufferlen)
-		return 0;
-
-	*buffer = ctx->thiz->data + ctx->thiz_offset;
-	*bufferlen = sizeof( ctx->thiz->data ) - ctx->thiz_offset;
-
-	return 0;
-}
-
-static int mem_chunk_seek( mem_chunk_ctx_t * ctx, long offset, int whence) {
-
-	// determine absolute address
-	size_t abs;
-	switch(whence)
-	{
-	case SEEK_SET:
-		abs = offset;
-		break;
-	case SEEK_CUR:
-		abs = ctx->cur_pos + offset;
-		break;
-	case SEEK_END:
-		abs = ctx->size + offset;
-		break;
-	}
-
-	/*** is a relative seek possible ??? ***/
-	if( (ctx->cur_pos - ctx->thiz_offset) <= abs ) {
-
-		/*
-		 * yes! - rewind to the beginning of this block
-		 * and make the absolute address relative.
-		 */
-		ctx->cur_pos -= ctx->thiz_offset;
-		ctx->thiz_offset = 0;
-		abs -= ctx->cur_pos;
-	}
-	else {
-
-		/*
-		 * no! - rewind to the beginning of the file.
-		 */
-		ctx->cur_pos = 0;
-		ctx->thiz_offset = 0;
-		ctx->thiz = ctx->base;
-	}
-
-	// now seek forward to target address.
-	for(;;) {
-		if( abs < ALLOC_DATA_SIZE ) {
-			ctx->thiz_offset  = abs;
-			ctx->cur_pos += abs;
-			return 0;
-		}
-		else {
-
-			if( !ctx->thiz->header.next )
-				return -1; // attempted to seek past end of file!
-
-			abs -= ALLOC_DATA_SIZE;
-			ctx->cur_pos += ALLOC_DATA_SIZE;
-			ctx->thiz = ctx->thiz->header.next;
-		}
-	}
-
-	return -1; // never hit
-}
 
 struct sample_header_struct {
 
@@ -191,6 +56,7 @@ struct esprom_struct {
 	sample_header_t * sample_headers;
 
 	short samples;
+	int   blkbsz; // underlying device block size ( for O_DIRECT )
 };
 
 typedef struct esprom_struct prom_context_t;
@@ -215,6 +81,9 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 
 	if((*ph = calloc(1, sizeof(prom_context_t) )) == NULL)
 		goto bad;
+
+	(*ph)->blkbsz = 512;
+	// TODO: actually GET block-size.
 
 	if(fread( &((*ph)->samples) ,2,1,file) != 1)
 		goto bad;
@@ -383,8 +252,7 @@ bad:
 	return -1;
 }
 
-// EXPORTED SYMBOL
-int esprom_sample_seek( esprom_sample_handle sample, long offset, int whence ) {
+static int esprom_sample_seek( esprom_sample_handle sample, long offset, int whence ) {
 
 	if(!sample)
 		return -1;
@@ -404,9 +272,18 @@ int esprom_sample_seek( esprom_sample_handle sample, long offset, int whence ) {
 }
 
 // EXPORTED SYMBOL
+int esprom_sample_rewind( esprom_sample_handle sample ) {
+
+	return esprom_sample_seek(sample, 0, SEEK_SET);
+}
+
+// EXPORTED SYMBOL
 int esprom_sample_getbuffer(esprom_sample_handle sample, void ** buffer, size_t * bufferlen ) {
 
 	int err;
+
+	*buffer = NULL;
+	*bufferlen = 0;
 
 	if(!sample)
 		return -1;
@@ -416,18 +293,11 @@ int esprom_sample_getbuffer(esprom_sample_handle sample, void ** buffer, size_t 
 		size_t size = 1 + (sample->end - sample->mem_chunk_ctx.cur_pos);
 		if( *bufferlen > size)
 			*bufferlen = size;
+
+		err = esprom_sample_seek( sample, *bufferlen, SEEK_CUR );
 	}
 
 	return err;
-}
-
-// EXPORTED SYMBOL
-size_t esprom_sample_size(esprom_sample_handle sample) {
-
-	if(!sample)
-		return -1;
-
-	return 1 + (sample->end - sample->start);
 }
 
 // EXPORTED SYMBOL
@@ -435,5 +305,24 @@ void esprom_sample_free( esprom_sample_handle sample ) {
 
 	if(sample)
 		free(sample);
+}
+
+int esprom_sample_releasebuffer(esprom_sample_handle sample) {
+#if LIBESPROM_STREAM
+#error not-implemented
+#endif
+	return 0;
+}
+
+
+
+int esprom_BLKBSZGET(esprom_handle prom, int * blkbsz) {
+
+	if(!prom || !blkbsz)
+		return -1;
+
+	*blkbsz = prom->blkbsz;
+
+	return 0;
 }
 
