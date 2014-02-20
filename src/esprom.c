@@ -6,6 +6,7 @@
  */
 
 #include "libesprom.h"
+#include "embedded_file.h"
 
 #include <stdlib.h>
 #include <ctype.h>
@@ -16,11 +17,10 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <linux/limits.h>
+#include <linux/fs.h>
 #include <sys/ioctl.h>
 
 #include "memchunk.h"
-
-#define LIBESPROM_STREAM 0
 
 #if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
 #define RH_BIG_ENDIAN
@@ -56,7 +56,6 @@ struct esprom_struct {
 	sample_header_t * sample_headers;
 
 	short samples;
-	int   blkbsz; // underlying device block size ( for O_DIRECT )
 };
 
 typedef struct esprom_struct prom_context_t;
@@ -64,7 +63,11 @@ typedef struct esprom_struct prom_context_t;
 // EXPORTED SYMBOL
 int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 
-	FILE * file = NULL;
+//	FILE * file = NULL;
+
+	ef_buffer_t ef_file_buffer = NULL;
+	ef_file_t   ef_file = NULL;
+
 	size_t highest_address = 0;
 	size_t lowest_address = -1;
 
@@ -73,20 +76,21 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 
 	*ph = NULL;
 
-	if(!(file = fopen(fn, "rb")))
+	if( ef_buffer_create( &ef_file_buffer ) != 0 )
 		goto bad;
 
-	if( fseek(file, 14, SEEK_SET) != 0 )
+	if( ef_file_open(&ef_file, fn, 0, 0))
+		goto bad;
+
+	if( ef_file_seek(ef_file, 14, SEEK_SET) != 14 )
 		goto bad;
 
 	if((*ph = calloc(1, sizeof(prom_context_t) )) == NULL)
 		goto bad;
 
-	(*ph)->blkbsz = 512;
-	// TODO: actually GET block-size.
-
-	if(fread( &((*ph)->samples) ,2,1,file) != 1)
+	if(ef_file_read(ef_file, ef_file_buffer, &((*ph)->samples) ,2) != 2)
 		goto bad;
+
 	BE_TO_CPU_16_INPLACE((*ph)->samples);
 
 	(*ph)->sample_headers = (sample_header_t *)calloc( (*ph)->samples, sizeof(sample_header_t));
@@ -100,10 +104,10 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 
 			int data[2];
 
-			if( fseek(file, 18 + 10 * i, SEEK_SET) != 0 )
+			if( ef_file_seek(ef_file, 18 + 10 * i, SEEK_SET) != (18 + 10 * i) )
 				goto bad;
 
-			if(fread( data, sizeof data, 1, file ) != 1)
+			if(ef_file_read(ef_file, ef_file_buffer, data ,sizeof data) != sizeof data)
 				goto bad;
 
 			BE_TO_CPU_32_INPLACE(data[0]);
@@ -129,16 +133,16 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 
 			int data[2];
 
-			if( fseek(file, 18 + 10 * i, SEEK_SET) != 0 )
+			if( ef_file_seek(ef_file, 18 + 10 * i, SEEK_SET) != (18 + 10 * i) )
 				goto bad;
 
-			if(fread( data, sizeof data, 1, file ) != 1)
+			if(ef_file_read(ef_file, ef_file_buffer, data ,sizeof data) != sizeof data)
 				goto bad;
 
 			BE_TO_CPU_32_INPLACE(data[0]);
 			BE_TO_CPU_32_INPLACE(data[1]);
 
-			if( fseek(file, data[0], SEEK_SET) != 0)
+			if( ef_file_seek(ef_file, data[0], SEEK_SET) != data[0] )
 				goto bad;
 
 			{
@@ -158,7 +162,7 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 					if(bufferlen < readsize)
 						readsize = bufferlen;
 
-					if(fread(buffer, readsize, 1, file) != 1 )
+					if(ef_file_read(ef_file, ef_file_buffer, buffer , readsize) != readsize)
 						goto bad;
 
 					if( mem_chunk_seek(&(*ph)->mem_chunk_ctx, readsize, SEEK_CUR) != 0 )
@@ -170,7 +174,8 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 		}
 	}
 
-	fclose(file);
+	ef_file_close(ef_file);
+	ef_buffer_destroy(ef_file_buffer);
 
 	return 0;
 
@@ -182,8 +187,10 @@ bad:
 			free_chunks( (*ph)->mem_chunk_ctx.thiz );
 			free(*ph);
 		}
-		if(file)
-			fclose(file);
+		if(ef_file)
+			ef_file_close(ef_file);
+		if(ef_file_buffer)
+			ef_buffer_destroy(ef_file_buffer);
 	}
 
 	return -1;
@@ -307,22 +314,4 @@ void esprom_sample_free( esprom_sample_handle sample ) {
 		free(sample);
 }
 
-int esprom_sample_releasebuffer(esprom_sample_handle sample) {
-#if LIBESPROM_STREAM
-#error not-implemented
-#endif
-	return 0;
-}
-
-
-
-int esprom_BLKBSZGET(esprom_handle prom, int * blkbsz) {
-
-	if(!prom || !blkbsz)
-		return -1;
-
-	*blkbsz = prom->blkbsz;
-
-	return 0;
-}
 

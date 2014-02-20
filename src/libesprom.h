@@ -27,11 +27,11 @@ int esprom_sample_rewind( esprom_sample_handle sample );
 // Get a filled buffer. you should release it with _releasebuffer when it is no-longer needed.
 int esprom_sample_getbuffer(esprom_sample_handle sample, void ** buffer, size_t * bufferlen );
 
-// free a buffer.
+// free next buffer.
 int esprom_sample_releasebuffer(esprom_sample_handle sample);
 
-
-
+// free all buffers.
+int esprom_sample_resetbuffers(esprom_sample_handle sample);
 
 #ifdef __cplusplus
 } // extern "C" {
