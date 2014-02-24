@@ -65,7 +65,6 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 
 //	FILE * file = NULL;
 
-	ef_buffer_t ef_file_buffer = NULL;
 	ef_file_t   ef_file = NULL;
 
 	size_t highest_address = 0;
@@ -76,10 +75,7 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 
 	*ph = NULL;
 
-	if( ef_buffer_create( &ef_file_buffer ) != 0 )
-		goto bad;
-
-	if( ef_file_open(&ef_file, fn, 0, 0))
+	if( ef_file_open(&ef_file, NULL, fn, O_RDONLY, 0))
 		goto bad;
 
 	if( ef_file_seek(ef_file, 14, SEEK_SET) != 14 )
@@ -88,7 +84,7 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 	if((*ph = calloc(1, sizeof(prom_context_t) )) == NULL)
 		goto bad;
 
-	if(ef_file_read(ef_file, ef_file_buffer, &((*ph)->samples) ,2) != 2)
+	if(ef_file_read(ef_file, &((*ph)->samples) ,2) != 2)
 		goto bad;
 
 	BE_TO_CPU_16_INPLACE((*ph)->samples);
@@ -107,7 +103,7 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 			if( ef_file_seek(ef_file, 18 + 10 * i, SEEK_SET) != (18 + 10 * i) )
 				goto bad;
 
-			if(ef_file_read(ef_file, ef_file_buffer, data ,sizeof data) != sizeof data)
+			if(ef_file_read(ef_file, data ,sizeof data) != sizeof data)
 				goto bad;
 
 			BE_TO_CPU_32_INPLACE(data[0]);
@@ -136,7 +132,7 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 			if( ef_file_seek(ef_file, 18 + 10 * i, SEEK_SET) != (18 + 10 * i) )
 				goto bad;
 
-			if(ef_file_read(ef_file, ef_file_buffer, data ,sizeof data) != sizeof data)
+			if(ef_file_read(ef_file, data ,sizeof data) != sizeof data)
 				goto bad;
 
 			BE_TO_CPU_32_INPLACE(data[0]);
@@ -162,7 +158,7 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 					if(bufferlen < readsize)
 						readsize = bufferlen;
 
-					if(ef_file_read(ef_file, ef_file_buffer, buffer , readsize) != readsize)
+					if(ef_file_read(ef_file, buffer , readsize) != readsize)
 						goto bad;
 
 					if( mem_chunk_seek(&(*ph)->mem_chunk_ctx, readsize, SEEK_CUR) != 0 )
@@ -175,7 +171,6 @@ int esprom_alloc( const char * const fn, esprom_handle * ph ) {
 	}
 
 	ef_file_close(ef_file);
-	ef_buffer_destroy(ef_file_buffer);
 
 	return 0;
 
@@ -189,8 +184,6 @@ bad:
 		}
 		if(ef_file)
 			ef_file_close(ef_file);
-		if(ef_file_buffer)
-			ef_buffer_destroy(ef_file_buffer);
 	}
 
 	return -1;
